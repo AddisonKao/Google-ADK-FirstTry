@@ -18,8 +18,8 @@ if _openai_base and _openai_key:
     )
     print(f"[agent] Using OpenAI-compatible endpoint: {_openai_base}, model: {_openai_model}")
 else:
-    _model = "gemini-2.0-flash"
-    print("[agent] Using Gemini API")
+    _model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    print(f"[agent] Using Gemini API, model: {_model}")
 
 
 # ── Langfuse client (shared) ───────────────────────────────────────────────
