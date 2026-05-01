@@ -15,6 +15,9 @@ SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "kafka-adk-agent")
 
 
 def setup():
+    if not ENDPOINT:
+        return
+
     # Traces
     tracer_provider = TracerProvider()
     tracer_provider.add_span_processor(
@@ -30,5 +33,8 @@ def setup():
     meter_provider = MeterProvider(metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
 
-    # Auto-instrument Kafka client
-    ConfluentKafkaInstrumentor().instrument()
+    # Auto-instrument Kafka client (only if confluent_kafka is available)
+    try:
+        ConfluentKafkaInstrumentor().instrument()
+    except Exception:
+        pass
