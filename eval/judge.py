@@ -66,7 +66,7 @@ def judge(
     else:
         import google.generativeai as genai
         genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.0-flash"))
+        model = genai.GenerativeModel(os.getenv("JUDGE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash")))
         result = model.generate_content(
             prompt,
             generation_config={"temperature": 0},
