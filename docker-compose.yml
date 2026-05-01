@@ -1,0 +1,82 @@
+version: "3.9"
+
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_SERVICE_NAME: kafka-adk-agent
+  OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true"
+
+x-kafka-env: &kafka-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+
+x-langfuse-env: &langfuse-env
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
+  LANGFUSE_ENVIRONMENT: ${LANGFUSE_ENVIRONMENT:-production}
+
+services:
+
+  # ── Kafka ──────────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ── Application ────────────────────────────────────────────────────────────
+  agent-consumer:
+    build: .
+    command: python -m agent.consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*otel-env, *kafka-env, *langfuse-env]
+      # Mode 1: Gemini
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Mode 2: OpenAI-compatible endpoint
+      OPENAI_API_BASE: ${OPENAI_API_BASE:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      # Disable Langfuse SDK's auto OTel exporter (requires Langfuse v3 server)
+      LANGFUSE_TRACING_ENABLED: "false"
+    restart: on-failure
+
+  agent-api:
+    build: .
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*otel-env, *kafka-env]
+
+  # Observability services moved to docker-compose.infra.yml
+
+networks:
+  default:
+    name: adk-net
+    external: true
