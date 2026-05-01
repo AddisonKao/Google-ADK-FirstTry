@@ -1,0 +1,131 @@
+name: Agent Eval
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ── Level 1: Fast assertions (runs on every commit) ────────────────────────
+  level1-assertions:
+    name: Level 1 — Assertions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check root_agent exists in agent.py
+        run: grep -q "root_agent" agent/agent.py
+
+      - name: Validate dataset.jsonl
+        run: |
+          python3 -c "
+          import json, sys
+          with open('eval/dataset.jsonl') as f:
+              lines = [l.strip() for l in f if l.strip()]
+          assert len(lines) >= 5, f'Expected at least 5 test cases, got {len(lines)}'
+          for i, line in enumerate(lines):
+              obj = json.loads(line)
+              assert 'input' in obj, f'Line {i}: missing input'
+              assert 'expected_criteria' in obj, f'Line {i}: missing expected_criteria'
+          print(f'Dataset OK: {len(lines)} cases')
+          "
+
+      - name: Check required packages in requirements.txt
+        run: |
+          for pkg in google-adk confluent-kafka opentelemetry-sdk fastapi langfuse; do
+            grep -qi "$pkg" requirements.txt || (echo "Missing: $pkg" && exit 1)
+          done
+          echo "requirements.txt OK"
+
+  # ── Level 2: LLM eval (only on agent/ or prompts/ changes) ────────────────
+  level2-llm-eval:
+    name: Level 2 — LLM Eval
+    runs-on: ubuntu-latest
+    needs: level1-assertions
+    if: |
+      github.event_name == 'pull_request' &&
+      (
+        contains(github.event.pull_request.changed_files_url, 'agent/') ||
+        toJson(github.event.pull_request.files) != '[]'
+      )
+    # Use path filter via dorny/paths-filter
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check which paths changed
+        id: paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            agent:
+              - 'agent/**'
+              - 'prompts/**'
+
+      - name: Skip if no agent/prompt changes
+        if: steps.paths.outputs.agent != 'true'
+        run: |
+          echo "No agent or prompt changes detected. Skipping Level 2 eval."
+          exit 0
+
+      - name: Set up Python
+        if: steps.paths.outputs.agent == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.paths.outputs.agent == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Start Langfuse (self-hosted)
+        if: steps.paths.outputs.agent == 'true'
+        run: |
+          docker compose -f docker-compose.infra.yml up -d postgres langfuse
+          echo "Waiting for Langfuse..."
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3030/api/public/health && break || sleep 3
+          done
+
+      - name: Run eval
+        if: steps.paths.outputs.agent == 'true'
+        env:
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_HOST: http://localhost:3030
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ secrets.OPENAI_MODEL || 'gpt-4o' }}
+          JUDGE_MODEL: ${{ secrets.JUDGE_MODEL || 'gpt-4o' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          KAFKA_BOOTSTRAP_SERVERS: "localhost:9092"
+          OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317"
+        run: python eval/run_eval.py
+
+      - name: Post PR comment
+        if: steps.paths.outputs.agent == 'true' && always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let body = '## Agent Eval Results\n\n';
+            try {
+              const summary = JSON.parse(fs.readFileSync('eval_summary.json', 'utf8'));
+              const status = summary.passed ? '✅ PASS' : '❌ FAIL';
+              const baseline = summary.baseline != null ? `${summary.baseline.toFixed(2)}` : 'N/A';
+              body += `**Status:** ${status}\n`;
+              body += `**Mean Score:** ${summary.mean_score}/10\n`;
+              body += `**Pass Rate:** ${(summary.pass_rate * 100).toFixed(0)}%\n`;
+              body += `**Baseline:** ${baseline}\n`;
+              body += `**Run:** \`${summary.run_name}\`\n`;
+              body += `**Langfuse:** ${summary.langfuse_url}\n`;
+            } catch (e) {
+              body += '⚠️ Could not read eval summary.\n';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

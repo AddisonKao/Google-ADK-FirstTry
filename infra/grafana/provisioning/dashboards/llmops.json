@@ -1,0 +1,74 @@
+{
+  "title": "LLMOps - Kafka ADK Agent",
+  "uid": "llmops-kafka-adk",
+  "schemaVersion": 38,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Agent Invocation Latency (p99)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_agent_invocation_duration_bucket[5m])) by (le, agent_name))",
+          "legendFormat": "{{agent_name}} p99"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tool Execution Latency (p99)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_tool_execution_duration_bucket[5m])) by (le, tool_name))",
+          "legendFormat": "{{tool_name}} p99"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Agent Invocations / min",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "sum(rate(gen_ai_agent_invocation_duration_count[1m])) * 60",
+          "legendFormat": "invocations/min"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Agent Workflow Steps (avg)",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 8, "w": 6, "h": 4 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "avg(gen_ai_agent_workflow_steps_sum / gen_ai_agent_workflow_steps_count)",
+          "legendFormat": "avg steps"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Kafka Consumer Lag",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 4 },
+      "targets": [
+        {
+          "datasource": "Prometheus",
+          "expr": "kafka_consumer_group_lag",
+          "legendFormat": "{{topic}} / {{partition}}"
+        }
+      ]
+    }
+  ]
+}
