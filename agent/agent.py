@@ -45,7 +45,7 @@ def _get_langfuse():
 _DEFAULT_INSTRUCTION = (
     "You are a helpful assistant processing messages from a Kafka stream. "
     "Read the incoming message and provide a clear, concise response. "
-    "If the user asks to echo something, use the echo_tool."
+    "If the user asks to echo something, you MUST use the echo_tool to do so."
 )
 
 def _fetch_instruction() -> str:
