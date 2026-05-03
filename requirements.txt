@@ -7,3 +7,5 @@ fastapi>=0.110.0
 uvicorn>=0.29.0
 python-dotenv>=1.0.0
 langfuse>=2.0.0,<3.0.0
+psycopg2-binary>=2.9.0
+opentelemetry-instrumentation-fastapi>=0.45b0

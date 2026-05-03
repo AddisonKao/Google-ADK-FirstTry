@@ -1,6 +1,8 @@
 import json
 import os
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
 from agent.otel_setup import setup as setup_otel
 setup_otel()
 
@@ -23,6 +25,11 @@ tracer = trace.get_tracer("kafka_consumer")
 session_service = InMemorySessionService()
 runner = Runner(agent=root_agent, session_service=session_service, app_name="kafka_agent")
 
+# conversation_id → ADK session_id
+sessions: dict[str, str] = {}
+
+producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
+
 
 class KafkaHeaderGetter(DefaultGetter):
     def get(self, carrier: list, key: str):
@@ -40,18 +47,33 @@ class KafkaHeaderSetter(DefaultSetter):
         carrier.append((key, value.encode()))
 
 
-async def process_message(message_value: dict, headers: list) -> str:
-    """Run the ADK agent and return the final text response."""
+async def process_message(message_value: dict, headers: list) -> tuple[str, list]:
+    """Run the ADK agent and return (response_text, out_headers)."""
     ctx = propagate.extract(headers, getter=KafkaHeaderGetter())
 
+    out_headers = []
     with tracer.start_as_current_span("kafka_consumer.process", context=ctx):
         correlation_id = message_value.get("correlation_id", "unknown")
+        conversation_id = message_value.get("conversation_id", "unknown")
         user_text = message_value.get("message", "")
 
-        session = await session_service.create_session(
-            app_name="kafka_agent",
-            user_id="kafka-user",
-        )
+        # Reuse existing session for this conversation, or create a new one
+        if conversation_id in sessions:
+            session = await session_service.get_session(
+                app_name="kafka_agent",
+                user_id="kafka-user",
+                session_id=sessions[conversation_id],
+            )
+            if session is None:
+                session = await session_service.create_session(
+                    app_name="kafka_agent", user_id="kafka-user"
+                )
+                sessions[conversation_id] = session.id
+        else:
+            session = await session_service.create_session(
+                app_name="kafka_agent", user_id="kafka-user"
+            )
+            sessions[conversation_id] = session.id
 
         content = genai_types.Content(
             role="user",
@@ -67,7 +89,35 @@ async def process_message(message_value: dict, headers: list) -> str:
             if event.is_final_response() and event.content and event.content.parts:
                 response_text = event.content.parts[0].text
 
-        return response_text
+        # Inject trace context while span is still active
+        propagate.inject(out_headers, setter=KafkaHeaderSetter())
+
+    return response_text, out_headers
+
+
+def process_message_sync(value: dict, headers: list):
+    """Called in thread pool. Each thread gets its own event loop."""
+    correlation_id = value.get("correlation_id", "unknown")
+    conversation_id = value.get("conversation_id", "unknown")
+
+    try:
+        response_text, out_headers = asyncio.run(process_message(value, headers))
+
+        producer.produce(
+            OUTPUT_TOPIC,
+            key=correlation_id.encode(),
+            value=json.dumps({
+                "correlation_id": correlation_id,
+                "conversation_id": conversation_id,
+                "response": response_text,
+            }).encode("utf-8"),
+            headers=out_headers,
+        )
+        producer.flush()
+        print(f"[consumer] Published response for {correlation_id}")
+
+    except Exception as e:
+        print(f"[consumer] Failed to process message {correlation_id}: {e}")
 
 
 def run_consumer():
@@ -76,8 +126,8 @@ def run_consumer():
         "group.id": GROUP_ID,
         "auto.offset.reset": "earliest",
     })
-    producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
 
+    executor = ThreadPoolExecutor(max_workers=5)
     consumer.subscribe([INPUT_TOPIC])
     print(f"[consumer] Subscribed to {INPUT_TOPIC}")
 
@@ -95,30 +145,15 @@ def run_consumer():
                 value = json.loads(msg.value().decode("utf-8"))
                 headers = msg.headers() or []
                 correlation_id = value.get("correlation_id", "unknown")
-
-                print(f"[consumer] Processing message {correlation_id}")
-                response_text = asyncio.run(process_message(value, headers))
-
-                out_headers = []
-                propagate.inject(out_headers, setter=KafkaHeaderSetter())
-
-                producer.produce(
-                    OUTPUT_TOPIC,
-                    key=correlation_id.encode(),
-                    value=json.dumps({
-                        "correlation_id": correlation_id,
-                        "response": response_text,
-                    }).encode("utf-8"),
-                    headers=out_headers,
-                )
-                producer.flush()
-                print(f"[consumer] Published response for {correlation_id}")
+                print(f"[consumer] Dispatching message {correlation_id}")
+                executor.submit(process_message_sync, value, headers)
 
             except Exception as e:
-                print(f"[consumer] Failed to process message: {e}")
+                print(f"[consumer] Failed to dispatch message: {e}")
 
     finally:
         consumer.close()
+        executor.shutdown(wait=False)
 
 
 if __name__ == "__main__":
