@@ -64,12 +64,13 @@ def judge(
         )
         text = result.choices[0].message.content
     else:
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        result = model.generate_content(
-            prompt,
-            generation_config={"temperature": 0},
+        from google import genai
+        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        judge_model_name = os.getenv("JUDGE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+        result = client.models.generate_content(
+            model=judge_model_name,
+            contents=prompt,
+            config={"temperature": 0},
         )
         text = result.text
 

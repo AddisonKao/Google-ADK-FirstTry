@@ -18,8 +18,8 @@ if _openai_base and _openai_key:
     )
     print(f"[agent] Using OpenAI-compatible endpoint: {_openai_base}, model: {_openai_model}")
 else:
-    _model = "gemini-2.0-flash"
-    print("[agent] Using Gemini API")
+    _model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    print(f"[agent] Using Gemini API, model: {_model}")
 
 
 # ── Langfuse client (shared) ───────────────────────────────────────────────
@@ -45,7 +45,7 @@ def _get_langfuse():
 _DEFAULT_INSTRUCTION = (
     "You are a helpful assistant processing messages from a Kafka stream. "
     "Read the incoming message and provide a clear, concise response. "
-    "If the user asks to echo something, use the echo_tool."
+    "If the user asks to echo something, you MUST use the echo_tool to do so."
 )
 
 def _fetch_instruction() -> str:

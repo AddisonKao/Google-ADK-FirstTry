@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   # ── Level 1: Fast assertions (runs on every commit) ────────────────────────
   level1-assertions:
