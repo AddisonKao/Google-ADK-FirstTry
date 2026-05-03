@@ -103,18 +103,27 @@ def get_baseline_score(lf: Langfuse) -> float | None:
 
 
 def main():
-    lf = Langfuse(
-        secret_key=os.environ["LANGFUSE_SECRET_KEY"],
-        public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
-        host=os.getenv("LANGFUSE_HOST", "http://localhost:3030"),
-    )
+    secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+    public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+    langfuse_enabled = bool(secret_key and public_key)
+
+    lf = None
+    if langfuse_enabled:
+        lf = Langfuse(
+            secret_key=secret_key,
+            public_key=public_key,
+            host=os.getenv("LANGFUSE_HOST", "http://localhost:3030"),
+        )
+        print("[eval] Langfuse enabled")
+    else:
+        print("[eval] Langfuse disabled (no keys) — skipping trace logging")
 
     git_sha = get_git_sha()
     run_name = f"eval-{git_sha}"
     cases = load_dataset()
     print(f"[eval] Running {len(cases)} cases (run: {run_name})")
 
-    baseline = get_baseline_score(lf)
+    baseline = get_baseline_score(lf) if lf else None
     if baseline is not None:
         print(f"[eval] Baseline mean score: {baseline:.2f}")
 
@@ -140,14 +149,15 @@ def main():
         status = "✓" if verdict["pass"] else "✗"
         print(f"  {status} score={verdict['score']} — {verdict['reason']}")
 
-        # Log to Langfuse
-        trace = lf.trace(name=f"{run_name}/{case_id}", input=case["input"], output=response)
-        lf.score(
-            trace_id=trace.id,
-            name="llm-judge",
-            value=verdict["score"],
-            comment=verdict["reason"],
-        )
+        # Log to Langfuse (if enabled)
+        if lf:
+            trace = lf.trace(name=f"{run_name}/{case_id}", input=case["input"], output=response)
+            lf.score(
+                trace_id=trace.id,
+                name="llm-judge",
+                value=verdict["score"],
+                comment=verdict["reason"],
+            )
 
     mean_score = sum(scores) / len(scores)
     pass_rate = sum(1 for r in results if r["verdict"]["pass"]) / len(results)
@@ -167,20 +177,21 @@ def main():
 
     overall_pass = passed and not regression_fail
 
-    # Post experiment run to Langfuse
+    # Post experiment run to Langfuse (if enabled)
     langfuse_url = os.getenv("LANGFUSE_HOST", "http://localhost:3030")
-    lf.trace(
-        name=run_name,
-        metadata={
-            "passed": overall_pass,
-            "mean_score": mean_score,
-            "pass_rate": pass_rate,
-            "baseline": baseline,
-            "git_sha": git_sha,
-            "threshold": SCORE_THRESHOLD,
-        },
-    )
-    lf.flush()
+    if lf:
+        lf.trace(
+            name=run_name,
+            metadata={
+                "passed": overall_pass,
+                "mean_score": mean_score,
+                "pass_rate": pass_rate,
+                "baseline": baseline,
+                "git_sha": git_sha,
+                "threshold": SCORE_THRESHOLD,
+            },
+        )
+        lf.flush()
 
     print(f"\n[eval] {'PASS ✓' if overall_pass else 'FAIL ✗'}")
     print(f"[eval] Langfuse: {langfuse_url}")
