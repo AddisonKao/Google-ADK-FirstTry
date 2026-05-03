@@ -1,24 +1,32 @@
+import asyncio
 import json
 import os
 import threading
 import uuid
 from pathlib import Path
 
+from agent.otel_setup import setup as setup_otel
+setup_otel()
+
 from confluent_kafka import Consumer, Producer, KafkaError
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from opentelemetry import propagate
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.propagators.textmap import DefaultSetter
+from psycopg2.extras import RealDictCursor
 from pydantic import BaseModel
+
+from api.db import init_db, get_connection
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 INPUT_TOPIC = "agent-input"
 OUTPUT_TOPIC = "agent-output"
 
 app = FastAPI(title="Kafka ADK Agent API")
+FastAPIInstrumentor.instrument_app(app)
 
-# In-memory store: correlation_id → response text
+# correlation_id → response text (cleared after SSE delivery)
 results: dict[str, str] = {}
 
 
@@ -30,7 +38,6 @@ class KafkaHeaderSetter(DefaultSetter):
 producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
 
 
-# Background thread: consume agent-output and populate results store
 def _output_consumer():
     consumer = Consumer({
         "bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS,
@@ -50,29 +57,67 @@ def _output_consumer():
             try:
                 value = json.loads(msg.value().decode("utf-8"))
                 cid = value.get("correlation_id")
+                conversation_id = value.get("conversation_id")
                 response = value.get("response", "")
+
                 if cid:
                     results[cid] = response
+
+                if conversation_id and response is not None:
+                    with get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(
+                                "INSERT INTO turns (conversation_id, role, content, correlation_id)"
+                                " VALUES (%s, %s, %s, %s)",
+                                (conversation_id, "assistant", response, cid),
+                            )
+                        conn.commit()
+
             except Exception as e:
-                print(f"[api output consumer] Parse error: {e}")
+                print(f"[api output consumer] Error: {e}")
     finally:
         consumer.close()
 
 
 @app.on_event("startup")
 def startup_event():
+    init_db()
     t = threading.Thread(target=_output_consumer, daemon=True)
     t.start()
 
 
-# ----- Endpoints -----
+# ----- Models -----
 
-class InvokeRequest(BaseModel):
+class TurnRequest(BaseModel):
     message: str
 
 
-@app.post("/invoke")
-def invoke(req: InvokeRequest):
+# ----- Endpoints -----
+
+@app.post("/conversations")
+def create_conversation():
+    conv_id = str(uuid.uuid4())
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO conversations (id) VALUES (%s)", (conv_id,))
+        conn.commit()
+    return {"conversation_id": conv_id}
+
+
+@app.post("/conversations/{conversation_id}/turns")
+def create_turn(conversation_id: str, req: TurnRequest):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM conversations WHERE id = %s", (conversation_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
+            cur.execute(
+                "INSERT INTO turns (conversation_id, role, content) VALUES (%s, %s, %s)",
+                (conversation_id, "user", req.message),
+            )
+        conn.commit()
+
     correlation_id = str(uuid.uuid4())
     headers: list = []
     propagate.inject(headers, setter=KafkaHeaderSetter())
@@ -81,6 +126,7 @@ def invoke(req: InvokeRequest):
         INPUT_TOPIC,
         key=correlation_id.encode(),
         value=json.dumps({
+            "conversation_id": conversation_id,
             "correlation_id": correlation_id,
             "message": req.message,
         }).encode("utf-8"),
@@ -90,15 +136,49 @@ def invoke(req: InvokeRequest):
     return {"correlation_id": correlation_id}
 
 
-@app.get("/result/{correlation_id}")
-def get_result(correlation_id: str):
-    if correlation_id in results:
-        return {"status": "done", "response": results[correlation_id]}
-    return JSONResponse(status_code=202, content={"status": "pending"})
+@app.get("/conversations/{conversation_id}/turns")
+def get_turns(conversation_id: str):
+    with get_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id FROM conversations WHERE id = %s", (conversation_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
+            cur.execute(
+                "SELECT role, content, created_at FROM turns"
+                " WHERE conversation_id = %s ORDER BY created_at ASC",
+                (conversation_id,),
+            )
+            rows = cur.fetchall()
+
+    return [
+        {"role": r["role"], "content": r["content"], "created_at": r["created_at"].isoformat()}
+        for r in rows
+    ]
+
+
+@app.get("/conversations/{conversation_id}/stream/{correlation_id}")
+async def stream_result(conversation_id: str, correlation_id: str):
+    async def event_generator():
+        for _ in range(120):  # 60 seconds at 0.5s intervals
+            if correlation_id in results:
+                response = results.pop(correlation_id)
+                yield f"data: {json.dumps({'response': response})}\n\n"
+                return
+            await asyncio.sleep(0.5)
+        yield f"data: {json.dumps({'error': 'timeout'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/health")
 def health():
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "error", "detail": "postgres unreachable"})
     return {"status": "ok"}
 
 
