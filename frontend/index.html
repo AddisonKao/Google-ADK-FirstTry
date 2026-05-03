@@ -4,77 +4,292 @@
   <meta charset="UTF-8" />
   <title>Kafka ADK Agent</title>
   <style>
-    body { font-family: sans-serif; max-width: 700px; margin: 60px auto; padding: 0 20px; }
-    h1 { font-size: 1.4rem; margin-bottom: 24px; }
-    textarea { width: 100%; height: 80px; padding: 8px; font-size: 1rem; box-sizing: border-box; }
-    button { margin-top: 10px; padding: 8px 20px; font-size: 1rem; cursor: pointer; }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    #status { margin-top: 14px; color: #888; font-size: 0.9rem; }
-    #response { margin-top: 20px; padding: 14px; background: #f4f4f4; border-radius: 6px;
-                min-height: 60px; white-space: pre-wrap; font-size: 0.95rem; display: none; }
-    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #ccc;
-               border-top-color: #555; border-radius: 50%; animation: spin 0.8s linear infinite;
-               margin-right: 6px; vertical-align: middle; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; background: #f5f5f5; }
+
+    /* Tab bar */
+    #tab-bar {
+      display: flex; align-items: center; gap: 4px;
+      padding: 8px 12px 0; background: #fff; border-bottom: 1px solid #ddd;
+      overflow-x: auto; flex-shrink: 0;
+    }
+    .tab {
+      padding: 6px 14px; border: 1px solid #ddd; border-bottom: none;
+      background: #f0f0f0; border-radius: 6px 6px 0 0; cursor: pointer;
+      font-size: 0.85rem; white-space: nowrap; user-select: none;
+    }
+    .tab.active { background: #fff; border-bottom: 1px solid #fff; font-weight: 600; }
+    .tab.pending { color: #888; }
+    #new-tab-btn {
+      padding: 6px 12px; border: 1px dashed #aaa; border-bottom: none;
+      background: transparent; border-radius: 6px 6px 0 0; cursor: pointer;
+      font-size: 0.85rem; color: #555; flex-shrink: 0;
+    }
+    #new-tab-btn:hover { background: #e8e8e8; }
+
+    /* Chat area */
+    #chat-area {
+      flex: 1; overflow-y: auto; padding: 20px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .bubble {
+      max-width: 70%; padding: 10px 14px; border-radius: 12px;
+      font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+    }
+    .bubble.user { background: #0078d4; color: #fff; align-self: flex-end; border-radius: 12px 12px 2px 12px; }
+    .bubble.assistant { background: #fff; border: 1px solid #ddd; align-self: flex-start; border-radius: 12px 12px 12px 2px; }
+    .bubble.thinking { color: #888; font-style: italic; background: #f0f0f0; border: 1px solid #ddd; align-self: flex-start; border-radius: 12px; }
+
+    /* Empty state */
+    #empty-state {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: #aaa; font-size: 1rem;
+    }
+
+    /* Input area */
+    #input-area {
+      padding: 12px 16px; background: #fff; border-top: 1px solid #ddd;
+      display: flex; gap: 8px; flex-shrink: 0;
+    }
+    #message-input {
+      flex: 1; padding: 10px 12px; font-size: 0.95rem;
+      border: 1px solid #ccc; border-radius: 8px; resize: none; height: 44px;
+      font-family: inherit;
+    }
+    #message-input:focus { outline: none; border-color: #0078d4; }
+    #send-btn {
+      padding: 0 20px; background: #0078d4; color: #fff; border: none;
+      border-radius: 8px; font-size: 0.95rem; cursor: pointer; height: 44px;
+    }
+    #send-btn:disabled { background: #aac8ea; cursor: not-allowed; }
+    #send-btn:hover:not(:disabled) { background: #005fa3; }
+
+    .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid #ccc; border-top-color: #555;
+      border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 4px;
+    }
     @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  <h1>Kafka ADK Agent PoC</h1>
-  <textarea id="message" placeholder="Type a message to the agent..."></textarea>
-  <br/>
-  <button id="submit" onclick="sendMessage()">Send</button>
 
-  <div id="status"></div>
-  <div id="response"></div>
+  <div id="tab-bar">
+    <button id="new-tab-btn" onclick="newConversation()">+ New</button>
+  </div>
+
+  <div id="chat-area">
+    <div id="empty-state">Click "+ New" to start a conversation</div>
+  </div>
+
+  <div id="input-area">
+    <textarea id="message-input" placeholder="Type a message..." onkeydown="handleKey(event)"></textarea>
+    <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+  </div>
 
   <script>
+    // State
+    let conversations = [];   // [{id, label, turns: [{role, content}]}]
+    let activeConvId = null;
+    const pending = new Set(); // conversation IDs currently waiting for a response
+
+    // ── Tab management ────────────────────────────────────────────────────────
+
+    function saveToStorage() {
+      localStorage.setItem('adk_conversations', JSON.stringify(
+        conversations.map(c => ({ id: c.id, label: c.label }))
+      ));
+    }
+
+    async function newConversation() {
+      const res = await fetch('/conversations', { method: 'POST' });
+      const { conversation_id } = await res.json();
+      const label = `Chat ${conversations.length + 1}`;
+      conversations.push({ id: conversation_id, label, turns: [] });
+      saveToStorage();
+      renderTab(conversation_id, label);
+      switchTab(conversation_id);
+    }
+
+    function renderTab(convId, label) {
+      const tab = document.createElement('div');
+      tab.className = 'tab';
+      tab.id = `tab-${convId}`;
+      tab.textContent = label;
+      tab.onclick = () => switchTab(convId);
+      document.getElementById('tab-bar').appendChild(tab);
+    }
+
+    function switchTab(convId) {
+      activeConvId = convId;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      const tab = document.getElementById(`tab-${convId}`);
+      if (tab) tab.classList.add('active');
+
+      renderHistory();
+      updateSendButton();
+    }
+
+    // ── History rendering ─────────────────────────────────────────────────────
+
+    function renderHistory() {
+      const chatArea = document.getElementById('chat-area');
+      const conv = conversations.find(c => c.id === activeConvId);
+      if (!conv) {
+        chatArea.innerHTML = '<div id="empty-state">Click "+ New" to start a conversation</div>';
+        return;
+      }
+
+      chatArea.innerHTML = '';
+      for (const turn of conv.turns) {
+        appendBubble(turn.role, turn.content);
+      }
+      if (pending.has(activeConvId)) {
+        appendThinkingBubble();
+      }
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function appendBubble(role, content) {
+      const chatArea = document.getElementById('chat-area');
+      const div = document.createElement('div');
+      div.className = `bubble ${role}`;
+      div.textContent = content;
+      chatArea.appendChild(div);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function appendThinkingBubble() {
+      const chatArea = document.getElementById('chat-area');
+      const div = document.createElement('div');
+      div.className = 'bubble thinking';
+      div.id = `thinking-${activeConvId}`;
+      div.innerHTML = '<span class="spinner"></span>Thinking...';
+      chatArea.appendChild(div);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    function removeThinkingBubble(convId) {
+      const el = document.getElementById(`thinking-${convId}`);
+      if (el) el.remove();
+    }
+
+    // ── Send message ──────────────────────────────────────────────────────────
+
+    function handleKey(event) {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function updateSendButton() {
+      const btn = document.getElementById('send-btn');
+      btn.disabled = !activeConvId || pending.has(activeConvId);
+    }
+
     async function sendMessage() {
-      const message = document.getElementById('message').value.trim();
-      if (!message) return;
+      if (!activeConvId || pending.has(activeConvId)) return;
+      const input = document.getElementById('message-input');
+      const text = input.value.trim();
+      if (!text) return;
 
-      const btn = document.getElementById('submit');
-      const statusEl = document.getElementById('status');
-      const responseEl = document.getElementById('response');
+      input.value = '';
+      const convId = activeConvId;
 
-      btn.disabled = true;
-      responseEl.style.display = 'none';
-      statusEl.innerHTML = '<span class="spinner"></span>Sending to agent...';
+      // Optimistically add user bubble
+      const conv = conversations.find(c => c.id === convId);
+      conv.turns.push({ role: 'user', content: text });
+      if (activeConvId === convId) {
+        appendBubble('user', text);
+      }
+
+      // Mark pending
+      pending.add(convId);
+      updateSendButton();
+      const tab = document.getElementById(`tab-${convId}`);
+      if (tab) tab.classList.add('pending');
+
+      if (activeConvId === convId) appendThinkingBubble();
 
       try {
-        const res = await fetch('/invoke', {
+        const res = await fetch(`/conversations/${convId}/turns`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message }),
+          body: JSON.stringify({ message: text }),
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { correlation_id } = await res.json();
-        statusEl.innerHTML = `<span class="spinner"></span>Waiting for response (id: ${correlation_id.slice(0,8)}...)`;
-        await pollResult(correlation_id);
+        await waitForResponse(convId, correlation_id);
       } catch (e) {
-        statusEl.textContent = 'Error: ' + e.message;
-        btn.disabled = false;
+        console.error('sendMessage error:', e);
+        pending.delete(convId);
+        updateSendButton();
+        if (tab) tab.classList.remove('pending');
+        removeThinkingBubble(convId);
       }
     }
 
-    async function pollResult(correlation_id) {
-      const btn = document.getElementById('submit');
-      const statusEl = document.getElementById('status');
-      const responseEl = document.getElementById('response');
+    async function waitForResponse(convId, correlationId) {
+      const es = new EventSource(`/conversations/${convId}/stream/${correlationId}`);
+      es.onmessage = (event) => {
+        es.close();
+        const data = JSON.parse(event.data);
+        const tab = document.getElementById(`tab-${convId}`);
 
-      for (let i = 0; i < 60; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        const res = await fetch(`/result/${correlation_id}`);
-        if (res.status === 200) {
-          const data = await res.json();
-          statusEl.textContent = 'Done.';
-          responseEl.style.display = 'block';
-          responseEl.textContent = data.response;
-          btn.disabled = false;
-          return;
+        pending.delete(convId);
+        if (tab) tab.classList.remove('pending');
+
+        if (data.error) {
+          console.error('Agent error:', data.error);
+        } else {
+          const conv = conversations.find(c => c.id === convId);
+          if (conv) conv.turns.push({ role: 'assistant', content: data.response });
         }
-      }
-      statusEl.textContent = 'Timed out waiting for response.';
-      btn.disabled = false;
+
+        if (activeConvId === convId) {
+          removeThinkingBubble(convId);
+          if (data.response) appendBubble('assistant', data.response);
+          updateSendButton();
+        }
+      };
+
+      es.onerror = () => {
+        es.close();
+        pending.delete(convId);
+        const tab = document.getElementById(`tab-${convId}`);
+        if (tab) tab.classList.remove('pending');
+        removeThinkingBubble(convId);
+        updateSendButton();
+      };
     }
+
+    // ── Restore from localStorage ─────────────────────────────────────────────
+
+    async function fetchTurns(convId) {
+      try {
+        const res = await fetch(`/conversations/${convId}/turns`);
+        if (!res.ok) return [];
+        return await res.json();
+      } catch {
+        return [];
+      }
+    }
+
+    async function restoreConversations() {
+      const saved = JSON.parse(localStorage.getItem('adk_conversations') || '[]');
+      for (const { id, label } of saved) {
+        const turns = await fetchTurns(id);
+        conversations.push({ id, label, turns });
+        renderTab(id, label);
+      }
+      if (conversations.length > 0) {
+        switchTab(conversations[0].id);
+      }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    restoreConversations();
   </script>
 </body>
 </html>

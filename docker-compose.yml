@@ -74,6 +74,7 @@ services:
         condition: service_healthy
     environment:
       <<: [*otel-env, *kafka-env]
+      DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
 
   # Observability services moved to docker-compose.infra.yml
 
