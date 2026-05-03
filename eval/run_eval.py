@@ -50,6 +50,9 @@ def load_dataset() -> list[dict]:
 
 async def run_agent(text: str) -> tuple[str, list[str]]:
     """Run agent on input text. Returns (response_text, tools_called)."""
+    # Use a placeholder for empty input to avoid Gemini API errors
+    actual_text = text if text.strip() else "(empty message)"
+
     session_service = InMemorySessionService()
     runner = Runner(
         agent=root_agent,
@@ -60,7 +63,7 @@ async def run_agent(text: str) -> tuple[str, list[str]]:
         app_name="kafka_agent_eval", user_id="eval-user"
     )
     content = genai_types.Content(
-        role="user", parts=[genai_types.Part(text=text)]
+        role="user", parts=[genai_types.Part(text=actual_text)]
     )
     response_text = ""
     tools_called = []
@@ -74,6 +77,15 @@ async def run_agent(text: str) -> tuple[str, list[str]]:
         if event.is_final_response() and event.content and event.content.parts:
             response_text = event.content.parts[0].text
     return response_text, tools_called
+
+
+async def run_all_cases(cases: list[dict]) -> list[tuple[str, list[str]]]:
+    """Run all eval cases in a single event loop to avoid asyncio state issues."""
+    results = []
+    for case in cases:
+        response, tools_called = await run_agent(case["input"])
+        results.append((response, tools_called))
+    return results
 
 
 def get_baseline_score(lf: Langfuse) -> float | None:
@@ -109,11 +121,12 @@ def main():
     scores = []
     results = []
 
-    for case in cases:
+    agent_results = asyncio.run(run_all_cases(cases))
+
+    for case, (response, tools_called) in zip(cases, agent_results):
         case_id = case["id"]
         print(f"[eval] Case {case_id}: {case['input'][:60]}...")
 
-        response, tools_called = asyncio.run(run_agent(case["input"]))
         verdict = judge(
             input_text=case["input"],
             response=response,
