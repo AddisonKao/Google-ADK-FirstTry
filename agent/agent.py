@@ -58,7 +58,7 @@ def _fetch_instruction() -> str:
         return _DEFAULT_INSTRUCTION
     try:
         environment = os.getenv("LANGFUSE_ENVIRONMENT", "production")
-        prompt = lf.get_prompt("kafka-agent-system", label=environment, cache_ttl_seconds=60)
+        prompt = lf.get_prompt("kafka-agent-system", label=environment, cache_ttl_seconds=5)
         print(f"[agent] Fetched prompt from Langfuse (env={environment})")
         return prompt.compile()
     except Exception as e:
