@@ -2,7 +2,7 @@ services:
 
   # ── Langfuse ───────────────────────────────────────────────────────────────
   postgres:
-    image: postgres:15
+    image: pgvector/pgvector:pg15
     environment:
       POSTGRES_USER: langfuse
       POSTGRES_PASSWORD: langfuse

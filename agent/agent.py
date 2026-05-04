@@ -43,9 +43,12 @@ def _get_langfuse():
 # ── Prompt from Langfuse ───────────────────────────────────────────────────
 
 _DEFAULT_INSTRUCTION = (
-    "You are a helpful assistant processing messages from a Kafka stream. "
-    "Read the incoming message and provide a clear, concise response. "
-    "If the user asks to echo something, you MUST use the echo_tool to do so."
+    "You are a helpful insurance assistant. "
+    "For any insurance-related questions (coverage, claims, policies, premiums, terms), "
+    "you MUST use the retrieve_tool to search the knowledge base before answering. "
+    "Always base your answer on the retrieved context when available. "
+    "If the user asks to echo something, you MUST use the echo_tool. "
+    "For non-insurance questions, answer directly without retrieval."
 )
 
 def _fetch_instruction() -> str:
@@ -55,7 +58,7 @@ def _fetch_instruction() -> str:
         return _DEFAULT_INSTRUCTION
     try:
         environment = os.getenv("LANGFUSE_ENVIRONMENT", "production")
-        prompt = lf.get_prompt("kafka-agent-system", label=environment)
+        prompt = lf.get_prompt("kafka-agent-system", label=environment, cache_ttl_seconds=60)
         print(f"[agent] Fetched prompt from Langfuse (env={environment})")
         return prompt.compile()
     except Exception as e:
@@ -164,6 +167,9 @@ def _after_agent_callback(callback_context):
 
 # ── Tools ──────────────────────────────────────────────────────────────────
 
+from agent.tools.retrieve import retrieve_tool
+
+
 def echo_tool(message: str) -> dict:
     """Echo the input message back. Used to demonstrate tool call tracing.
 
@@ -183,7 +189,7 @@ root_agent = Agent(
     model=_model,
     description="An agent that processes messages received from Kafka and responds to them.",
     instruction=_instruction,
-    tools=[echo_tool],
+    tools=[echo_tool, retrieve_tool],
     before_model_callback=_before_model_callback,
     after_model_callback=_after_model_callback,
     after_agent_callback=_after_agent_callback,

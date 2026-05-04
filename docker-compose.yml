@@ -14,6 +14,17 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse:3000}
   LANGFUSE_ENVIRONMENT: ${LANGFUSE_ENVIRONMENT:-production}
 
+x-db-env: &db-env
+  DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
+
+x-rag-env: &rag-env
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-004}
+  EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
+  EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+  RAG_TOP_K: ${RAG_TOP_K:-5}
+  INGEST_MAX_RECORDS: ${INGEST_MAX_RECORDS:-0}
+  INGEST_BATCH_SIZE: ${INGEST_BATCH_SIZE:-100}
+
 services:
 
   # ── Kafka ──────────────────────────────────────────────────────────────────
@@ -52,7 +63,7 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      <<: [*otel-env, *kafka-env, *langfuse-env]
+      <<: [*otel-env, *kafka-env, *langfuse-env, *db-env, *rag-env]
       # Mode 1: Gemini
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Mode 2: OpenAI-compatible endpoint

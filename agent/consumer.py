@@ -13,7 +13,12 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 
-from agent.agent import root_agent
+from google.adk.agents import Agent
+from agent.agent import (
+    _model, _DEFAULT_INSTRUCTION, _fetch_instruction,
+    echo_tool, _before_model_callback, _after_model_callback, _after_agent_callback,
+)
+from agent.tools.retrieve import retrieve_tool
 
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 INPUT_TOPIC = "agent-input"
@@ -22,8 +27,23 @@ GROUP_ID = "kafka-adk-consumer"
 
 tracer = trace.get_tracer("kafka_consumer")
 
+# session_service 保留在 module level，確保 conversation 狀態不會跨 invocation 消失
 session_service = InMemorySessionService()
-runner = Runner(agent=root_agent, session_service=session_service, app_name="kafka_agent")
+
+
+def _build_runner() -> Runner:
+    """Create a new Agent with the latest prompt from Langfuse (SDK caches 60s by default)."""
+    instruction = _fetch_instruction()
+    agent = Agent(
+        name="kafka_agent",
+        model=_model,
+        instruction=instruction,
+        tools=[echo_tool, retrieve_tool],
+        before_model_callback=_before_model_callback,
+        after_model_callback=_after_model_callback,
+        after_agent_callback=_after_agent_callback,
+    )
+    return Runner(agent=agent, session_service=session_service, app_name="kafka_agent")
 
 # conversation_id → ADK session_id
 sessions: dict[str, str] = {}
@@ -80,6 +100,7 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
             parts=[genai_types.Part(text=user_text)],
         )
 
+        runner = _build_runner()
         response_text = ""
         async for event in runner.run_async(
             user_id="kafka-user",
