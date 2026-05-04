@@ -9,5 +9,6 @@ COPY agent/ ./agent/
 COPY api/ ./api/
 COPY frontend/ ./frontend/
 COPY eval/ ./eval/
+COPY ingest.py ./ingest.py
 
 ENV PYTHONUNBUFFERED=1
