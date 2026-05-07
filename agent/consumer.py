@@ -1,6 +1,7 @@
 import json
 import os
 import asyncio
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from agent.otel_setup import setup as setup_otel
@@ -10,7 +11,7 @@ from confluent_kafka import Consumer, Producer, KafkaError
 from opentelemetry import trace, propagate
 from opentelemetry.propagators.textmap import DefaultGetter, DefaultSetter
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions import DatabaseSessionService
 from google.genai import types as genai_types
 
 from google.adk.agents import Agent
@@ -27,8 +28,13 @@ GROUP_ID = "kafka-adk-consumer"
 
 tracer = trace.get_tracer("kafka_consumer")
 
-# session_service 保留在 module level，確保 conversation 狀態不會跨 invocation 消失
-session_service = InMemorySessionService()
+# Shared persistent event loop — keeps SQLAlchemy async connection pool alive
+_loop = asyncio.new_event_loop()
+threading.Thread(target=_loop.run_forever, daemon=True).start()
+
+session_service = DatabaseSessionService(
+    db_url="postgresql+asyncpg://langfuse:langfuse@postgres:5432/adk"
+)
 
 
 def _build_runner() -> Runner:
@@ -44,9 +50,6 @@ def _build_runner() -> Runner:
         after_agent_callback=_after_agent_callback,
     )
     return Runner(agent=agent, session_service=session_service, app_name="kafka_agent")
-
-# conversation_id → ADK session_id
-sessions: dict[str, str] = {}
 
 producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP_SERVERS})
 
@@ -77,23 +80,18 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
         conversation_id = message_value.get("conversation_id", "unknown")
         user_text = message_value.get("message", "")
 
-        # Reuse existing session for this conversation, or create a new one
-        if conversation_id in sessions:
-            session = await session_service.get_session(
+        # Use conversation_id as session_id — deterministic, survives consumer restarts
+        session = await session_service.get_session(
+            app_name="kafka_agent",
+            user_id="kafka-user",
+            session_id=conversation_id,
+        )
+        if session is None:
+            session = await session_service.create_session(
                 app_name="kafka_agent",
                 user_id="kafka-user",
-                session_id=sessions[conversation_id],
+                session_id=conversation_id,
             )
-            if session is None:
-                session = await session_service.create_session(
-                    app_name="kafka_agent", user_id="kafka-user"
-                )
-                sessions[conversation_id] = session.id
-        else:
-            session = await session_service.create_session(
-                app_name="kafka_agent", user_id="kafka-user"
-            )
-            sessions[conversation_id] = session.id
 
         content = genai_types.Content(
             role="user",
@@ -104,11 +102,14 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
         response_text = ""
         async for event in runner.run_async(
             user_id="kafka-user",
-            session_id=session.id,
+            session_id=conversation_id,
             new_message=content,
         ):
             if event.is_final_response() and event.content and event.content.parts:
-                response_text = event.content.parts[0].text
+                for part in event.content.parts:
+                    if getattr(part, "text", None):
+                        response_text = part.text
+                        break
 
         # Inject trace context while span is still active
         propagate.inject(out_headers, setter=KafkaHeaderSetter())
@@ -117,12 +118,13 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
 
 
 def process_message_sync(value: dict, headers: list):
-    """Called in thread pool. Each thread gets its own event loop."""
+    """Dispatch to the shared persistent event loop to avoid connection pool issues."""
     correlation_id = value.get("correlation_id", "unknown")
     conversation_id = value.get("conversation_id", "unknown")
 
     try:
-        response_text, out_headers = asyncio.run(process_message(value, headers))
+        future = asyncio.run_coroutine_threadsafe(process_message(value, headers), _loop)
+        response_text, out_headers = future.result(timeout=120)
 
         producer.produce(
             OUTPUT_TOPIC,

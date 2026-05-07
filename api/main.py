@@ -136,6 +136,18 @@ def create_turn(conversation_id: str, req: TurnRequest):
     return {"correlation_id": correlation_id}
 
 
+@app.delete("/conversations/{conversation_id}", status_code=204)
+def delete_conversation(conversation_id: str):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM conversations WHERE id = %s", (conversation_id,))
+            if cur.fetchone() is None:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            cur.execute("DELETE FROM turns WHERE conversation_id = %s", (conversation_id,))
+            cur.execute("DELETE FROM conversations WHERE id = %s", (conversation_id,))
+        conn.commit()
+
+
 @app.get("/conversations/{conversation_id}/turns")
 def get_turns(conversation_id: str):
     with get_connection() as conn:

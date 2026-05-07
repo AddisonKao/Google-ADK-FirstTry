@@ -17,9 +17,15 @@
       padding: 6px 14px; border: 1px solid #ddd; border-bottom: none;
       background: #f0f0f0; border-radius: 6px 6px 0 0; cursor: pointer;
       font-size: 0.85rem; white-space: nowrap; user-select: none;
+      display: flex; align-items: center; gap: 6px;
     }
     .tab.active { background: #fff; border-bottom: 1px solid #fff; font-weight: 600; }
     .tab.pending { color: #888; }
+    .tab-close {
+      font-size: 0.75rem; color: #999; line-height: 1;
+      padding: 1px 3px; border-radius: 3px;
+    }
+    .tab-close:hover { background: #ddd; color: #333; }
     #new-tab-btn {
       padding: 6px 12px; border: 1px dashed #aaa; border-bottom: none;
       background: transparent; border-radius: 6px 6px 0 0; cursor: pointer;
@@ -115,9 +121,44 @@
       const tab = document.createElement('div');
       tab.className = 'tab';
       tab.id = `tab-${convId}`;
-      tab.textContent = label;
       tab.onclick = () => switchTab(convId);
+
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = label;
+
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'tab-close';
+      closeBtn.textContent = '×';
+      closeBtn.title = 'Delete conversation';
+      closeBtn.onclick = (e) => {
+        e.stopPropagation();
+        deleteConversation(convId);
+      };
+
+      tab.appendChild(labelSpan);
+      tab.appendChild(closeBtn);
       document.getElementById('tab-bar').appendChild(tab);
+    }
+
+    async function deleteConversation(convId) {
+      await fetch(`/conversations/${convId}`, { method: 'DELETE' });
+
+      const idx = conversations.findIndex(c => c.id === convId);
+      conversations.splice(idx, 1);
+      saveToStorage();
+      document.getElementById(`tab-${convId}`)?.remove();
+
+      if (activeConvId === convId) {
+        const next = conversations[idx] || conversations[idx - 1];
+        if (next) {
+          switchTab(next.id);
+        } else {
+          activeConvId = null;
+          document.getElementById('chat-area').innerHTML =
+            '<div id="empty-state">Click "+ New" to start a conversation</div>';
+          updateSendButton();
+        }
+      }
     }
 
     function switchTab(convId) {
@@ -249,7 +290,7 @@
 
         if (activeConvId === convId) {
           removeThinkingBubble(convId);
-          if (data.response) appendBubble('assistant', data.response);
+          appendBubble('assistant', data.response || '(no response)');
           updateSendButton();
         }
       };
