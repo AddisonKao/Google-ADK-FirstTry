@@ -170,18 +170,6 @@ def _after_agent_callback(callback_context):
 from agent.tools.retrieve import retrieve_tool
 
 
-def echo_tool(message: str) -> dict:
-    """Echo the input message back. Used to demonstrate tool call tracing.
-
-    Args:
-        message: The message to echo.
-
-    Returns:
-        A dict with the echoed message.
-    """
-    return {"echoed": message}
-
-
 # ── Agent ──────────────────────────────────────────────────────────────────
 
 root_agent = Agent(
@@ -189,7 +177,7 @@ root_agent = Agent(
     model=_model,
     description="An agent that processes messages received from Kafka and responds to them.",
     instruction=_instruction,
-    tools=[echo_tool, retrieve_tool],
+    tools=[retrieve_tool],
     before_model_callback=_before_model_callback,
     after_model_callback=_after_model_callback,
     after_agent_callback=_after_agent_callback,
