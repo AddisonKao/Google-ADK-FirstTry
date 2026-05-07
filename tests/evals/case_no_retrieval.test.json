@@ -1,0 +1,57 @@
+{
+  "eval_set_id": "no_retrieval_trajectory",
+  "name": "Non-insurance questions should NOT trigger retrieve_tool",
+  "description": "Verifies agent does NOT call retrieve_tool for general questions",
+  "eval_cases": [
+    {
+      "eval_id": "greeting_no_retrieval",
+      "session_input": {
+        "app_name": "kafka_agent",
+        "user_id": "test_user",
+        "state": {}
+      },
+      "conversation": [
+        {
+          "invocation_id": "b1b2c3d4-0001-0001-0001-000000000001",
+          "user_content": {
+            "role": "user",
+            "parts": [{ "text": "你好！" }]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [{ "text": "你好！有什麼可以為您服務的嗎？" }]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "intermediate_responses": []
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "general_question_no_retrieval",
+      "session_input": {
+        "app_name": "kafka_agent",
+        "user_id": "test_user",
+        "state": {}
+      },
+      "conversation": [
+        {
+          "invocation_id": "b1b2c3d4-0002-0002-0002-000000000002",
+          "user_content": {
+            "role": "user",
+            "parts": [{ "text": "今天天氣怎麼樣？" }]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [{ "text": "我是保險助理，無法提供天氣資訊。" }]
+          },
+          "intermediate_data": {
+            "tool_uses": [],
+            "intermediate_responses": []
+          }
+        }
+      ]
+    }
+  ]
+}

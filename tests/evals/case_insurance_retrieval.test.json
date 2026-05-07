@@ -1,0 +1,118 @@
+{
+  "eval_set_id": "insurance_retrieval_trajectory",
+  "name": "Insurance questions should trigger retrieve_tool",
+  "description": "Verifies agent calls retrieve_tool for insurance-domain questions",
+  "eval_cases": [
+    {
+      "eval_id": "premium_rate_query",
+      "session_input": {
+        "app_name": "kafka_agent",
+        "user_id": "test_user",
+        "state": {}
+      },
+      "conversation": [
+        {
+          "invocation_id": "a1b2c3d4-0001-0001-0001-000000000001",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "30 歲男性投保長青守護保險，20 年繳，每月保費多少？"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "根據費率表，30 歲男性每月保費約 2,850 元。"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "retrieve_tool"
+              }
+            ],
+            "intermediate_responses": []
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "claims_document_query",
+      "session_input": {
+        "app_name": "kafka_agent",
+        "user_id": "test_user",
+        "state": {}
+      },
+      "conversation": [
+        {
+          "invocation_id": "a1b2c3d4-0002-0002-0002-000000000002",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "申請醫療實支實付理賠需要準備哪些文件？"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "申請理賠需備妥：理賠申請書、診斷證明書正本、醫療費用收據正本。"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "retrieve_tool"
+              }
+            ],
+            "intermediate_responses": []
+          }
+        }
+      ]
+    },
+    {
+      "eval_id": "accident_insurance_query",
+      "session_input": {
+        "app_name": "kafka_agent",
+        "user_id": "test_user",
+        "state": {}
+      },
+      "conversation": [
+        {
+          "invocation_id": "a1b2c3d4-0003-0003-0003-000000000003",
+          "user_content": {
+            "role": "user",
+            "parts": [
+              {
+                "text": "意外險搭乘大眾運輸工具有什麼特別規定？"
+              }
+            ]
+          },
+          "final_response": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "搭乘大眾運輸工具時，意外保險金加倍給付。"
+              }
+            ]
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "retrieve_tool"
+              }
+            ],
+            "intermediate_responses": []
+          }
+        }
+      ]
+    }
+  ]
+}
