@@ -10,5 +10,6 @@ COPY api/ ./api/
 COPY frontend/ ./frontend/
 COPY eval/ ./eval/
 COPY ingest.py ./ingest.py
+COPY docs/ ./docs/
 
 ENV PYTHONUNBUFFERED=1
