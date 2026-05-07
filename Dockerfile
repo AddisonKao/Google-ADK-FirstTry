@@ -11,5 +11,7 @@ COPY frontend/ ./frontend/
 COPY eval/ ./eval/
 COPY ingest.py ./ingest.py
 COPY docs/ ./docs/
+COPY tests/ ./tests/
+COPY pyproject.toml ./pyproject.toml
 
 ENV PYTHONUNBUFFERED=1

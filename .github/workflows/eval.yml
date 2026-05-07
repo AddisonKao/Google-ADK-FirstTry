@@ -39,6 +39,23 @@ jobs:
           done
           echo "requirements.txt OK"
 
+      - name: Set up Python for unit tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tests (Layer 1 pytest)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_BASE: ${{ secrets.OPENAI_API_BASE }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DATABASE_URL: "postgresql://langfuse:langfuse@localhost:5432/langfuse"
+        run: pytest tests/unit/ -v
+
   # ── Level 2: LLM eval (only on agent/ or prompts/ changes) ────────────────
   level2-llm-eval:
     name: Level 2 — LLM Eval
