@@ -11,7 +11,7 @@ done
 echo "Langfuse is ready."
 
 echo "Starting app stack (Kafka, agent-consumer, agent-api)..."
-docker compose up -d
+docker compose up -d --build
 
 echo ""
 echo "All services started."
