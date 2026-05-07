@@ -26,7 +26,7 @@ def test_retrieve_returns_no_results_message(monkeypatch):
 
     from agent.tools.retrieve import retrieve_tool
     result = retrieve_tool("什麼是保險？")
-    assert "No relevant information" in result
+    assert "No relevant information" in result.get("result", "")
 
 
 def test_retrieve_returns_db_unavailable_on_exception(monkeypatch):
@@ -39,7 +39,8 @@ def test_retrieve_returns_db_unavailable_on_exception(monkeypatch):
 
     from agent.tools.retrieve import retrieve_tool
     result = retrieve_tool("測試")
-    assert "Knowledge base unavailable" in result or "unavailable" in result.lower()
+    result_text = result.get("result", "") if isinstance(result, dict) else str(result)
+    assert "Knowledge base unavailable" in result_text or "unavailable" in result_text.lower()
 
 
 def test_retrieve_returns_chunks_when_rows_exist(monkeypatch):
@@ -63,5 +64,6 @@ def test_retrieve_returns_chunks_when_rows_exist(monkeypatch):
 
     from agent.tools.retrieve import retrieve_tool
     result = retrieve_tool("測試")
-    assert "chunk1 content" in result
-    assert "chunk2 content" in result
+    result_text = result.get("result", "") if isinstance(result, dict) else str(result)
+    assert "chunk1 content" in result_text
+    assert "chunk2 content" in result_text
