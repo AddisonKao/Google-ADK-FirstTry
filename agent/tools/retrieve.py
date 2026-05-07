@@ -27,8 +27,7 @@ def retrieve_tool(query: str) -> str:
         query: The question or topic to search for in the knowledge base.
 
     Returns:
-        A string containing the most relevant passages from the knowledge base,
-        separated by '---'. Returns a message if no results found.
+        A dict with key 'result' containing relevant passages, or an error message.
     """
     try:
         query_vec = embed_one(query)
@@ -41,10 +40,10 @@ def retrieve_tool(query: str) -> str:
         conn.close()
 
         if not rows:
-            return "No relevant information found in the knowledge base."
+            return {"result": "No relevant information found in the knowledge base."}
 
         chunks = [row[0] for row in rows]
-        return "\n---\n".join(chunks)
+        return {"result": "\n---\n".join(chunks)}
 
     except Exception as e:
-        return f"Knowledge base unavailable: {e}"
+        return {"result": f"Knowledge base unavailable: {e}"}

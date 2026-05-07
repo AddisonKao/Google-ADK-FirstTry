@@ -12,6 +12,7 @@ from opentelemetry import trace, propagate
 from opentelemetry.propagators.textmap import DefaultGetter, DefaultSetter
 from google.adk.runners import Runner
 from google.adk.sessions import DatabaseSessionService
+from google.adk.workflow._retry_config import RetryConfig
 from google.genai import types as genai_types
 
 from google.adk.agents import Agent
@@ -37,6 +38,12 @@ session_service = DatabaseSessionService(
 )
 
 
+def _on_model_error(context, llm_request, error: Exception):
+    """Log model errors so we can see rate limits and other failures."""
+    print(f"[model error] {type(error).__name__}: {error}")
+    return None  # return None to let retry_config handle the retry
+
+
 def _build_runner() -> Runner:
     """Create a new Agent with the latest prompt from Langfuse (SDK caches 60s by default)."""
     instruction = _fetch_instruction()
@@ -48,6 +55,12 @@ def _build_runner() -> Runner:
         before_model_callback=_before_model_callback,
         after_model_callback=_after_model_callback,
         after_agent_callback=_after_agent_callback,
+        retry_config=RetryConfig(
+            max_attempts=3,
+            initial_delay=2.0,
+            backoff_factor=2.0,
+        ),
+        on_model_error_callback=_on_model_error,
     )
     return Runner(agent=agent, session_service=session_service, app_name="kafka_agent")
 
@@ -98,21 +111,45 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
             parts=[genai_types.Part(text=user_text)],
         )
 
-        runner = _build_runner()
         response_text = ""
-        async for event in runner.run_async(
-            user_id="kafka-user",
-            session_id=conversation_id,
-            new_message=content,
-        ):
-            # is_final_response() can fire multiple times:
-            # 1st: function_call turn (no text) → skip
-            # 2nd: actual text response → capture
-            if event.is_final_response() and event.content and event.content.parts:
-                for part in event.content.parts:
-                    text = getattr(part, "text", None)
-                    if text and text.strip():
-                        response_text = text  # keep overwriting — last text wins
+        for agent_attempt in range(3):
+            runner = _build_runner()
+            # Fresh session for each retry to avoid stale conversation state
+            retry_session_id = f"{conversation_id}-r{agent_attempt}" if agent_attempt > 0 else conversation_id
+            try:
+                retry_session = await session_service.get_session(
+                    app_name="kafka_agent", user_id="kafka-user", session_id=retry_session_id,
+                )
+                if retry_session is None:
+                    retry_session = await session_service.create_session(
+                        app_name="kafka_agent", user_id="kafka-user", session_id=retry_session_id,
+                    )
+                async for event in runner.run_async(
+                    user_id="kafka-user",
+                    session_id=retry_session_id,
+                    new_message=content,
+                ):
+                    if event.is_final_response():
+                        parts = (event.content.parts or []) if event.content else []
+                        for part in parts:
+                            text = getattr(part, "text", None)
+                            if text and text.strip():
+                                response_text = text
+                        if not response_text:
+                            actions = getattr(event, "actions", None)
+                            if actions and getattr(actions, "skip_summarization", False):
+                                fn_responses = event.get_function_responses()
+                                if fn_responses:
+                                    result = fn_responses[0].response
+                                    response_text = result.get("result", str(result)) if isinstance(result, dict) else str(result or "")
+            except Exception as _runner_exc:
+                print(f"[consumer] runner exception ({type(_runner_exc).__name__}): {_runner_exc}")
+
+            if response_text:
+                break
+            if agent_attempt < 2:
+                print(f"[consumer] Empty response, retrying ({agent_attempt + 1}/3)...")
+                await asyncio.sleep(2)
 
         # Inject trace context while span is still active
         propagate.inject(out_headers, setter=KafkaHeaderSetter())
@@ -169,7 +206,7 @@ def run_consumer():
         "auto.offset.reset": "earliest",
     })
 
-    executor = ThreadPoolExecutor(max_workers=5)
+    executor = ThreadPoolExecutor(max_workers=3)
     consumer.subscribe([INPUT_TOPIC])
     print(f"[consumer] Subscribed to {INPUT_TOPIC}")
 
