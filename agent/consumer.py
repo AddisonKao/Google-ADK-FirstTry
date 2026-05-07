@@ -17,7 +17,7 @@ from google.genai import types as genai_types
 from google.adk.agents import Agent
 from agent.agent import (
     _model, _DEFAULT_INSTRUCTION, _fetch_instruction,
-    echo_tool, _before_model_callback, _after_model_callback, _after_agent_callback,
+    _before_model_callback, _after_model_callback, _after_agent_callback,
 )
 from agent.tools.retrieve import retrieve_tool
 
@@ -44,7 +44,7 @@ def _build_runner() -> Runner:
         name="kafka_agent",
         model=_model,
         instruction=instruction,
-        tools=[echo_tool, retrieve_tool],
+        tools=[retrieve_tool],
         before_model_callback=_before_model_callback,
         after_model_callback=_after_model_callback,
         after_agent_callback=_after_agent_callback,
@@ -105,11 +105,14 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
             session_id=conversation_id,
             new_message=content,
         ):
+            # is_final_response() can fire multiple times:
+            # 1st: function_call turn (no text) → skip
+            # 2nd: actual text response → capture
             if event.is_final_response() and event.content and event.content.parts:
                 for part in event.content.parts:
-                    if getattr(part, "text", None):
-                        response_text = part.text
-                        break
+                    text = getattr(part, "text", None)
+                    if text and text.strip():
+                        response_text = text  # keep overwriting — last text wins
 
         # Inject trace context while span is still active
         propagate.inject(out_headers, setter=KafkaHeaderSetter())
