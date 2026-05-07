@@ -11,5 +11,4 @@ psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
 asyncpg>=0.29.0
 opentelemetry-instrumentation-fastapi>=0.45b0
-datasets>=2.18.0
 google-genai>=1.0.0

@@ -23,12 +23,15 @@ def _embed_gemini(texts: list[str]) -> list[list[float]]:
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    result = client.models.embed_content(
-        model=EMBEDDING_MODEL,
-        contents=texts,
-        config=types.EmbedContentConfig(output_dimensionality=768),
-    )
-    return [e.values for e in result.embeddings]
+    vectors = []
+    for text in texts:
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+            config=types.EmbedContentConfig(output_dimensionality=768),
+        )
+        vectors.append(result.embeddings[0].values)
+    return vectors
 
 
 def _embed_openai_compat(texts: list[str]) -> list[list[float]]:

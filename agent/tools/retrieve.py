@@ -13,12 +13,9 @@ RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 
 HYBRID_SQL = """
 SELECT content,
-    0.6 * (1 - (embedding <=> %s::vector)) +
-    0.4 * ts_rank(content_tsv, plainto_tsquery('english', %s)) AS score
+    1 - (embedding <=> %s::vector) AS score
 FROM rag.documents
-WHERE content_tsv @@ plainto_tsquery('english', %s)
-   OR (embedding <=> %s::vector) < 0.5
-ORDER BY score DESC
+ORDER BY embedding <=> %s::vector
 LIMIT %s;
 """
 
@@ -39,7 +36,7 @@ def retrieve_tool(query: str) -> str:
 
         conn = psycopg2.connect(DATABASE_URL)
         with conn.cursor() as cur:
-            cur.execute(HYBRID_SQL, (vec_str, query, query, vec_str, RAG_TOP_K))
+            cur.execute(HYBRID_SQL, (vec_str, vec_str, RAG_TOP_K))
             rows = cur.fetchall()
         conn.close()
 

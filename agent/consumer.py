@@ -117,30 +117,46 @@ async def process_message(message_value: dict, headers: list) -> tuple[str, list
     return response_text, out_headers
 
 
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 3, 7]  # seconds between retries
+
+
 def process_message_sync(value: dict, headers: list):
-    """Dispatch to the shared persistent event loop to avoid connection pool issues."""
+    """Dispatch to the shared persistent event loop. Retries on transient errors."""
     correlation_id = value.get("correlation_id", "unknown")
     conversation_id = value.get("conversation_id", "unknown")
 
-    try:
-        future = asyncio.run_coroutine_threadsafe(process_message(value, headers), _loop)
-        response_text, out_headers = future.result(timeout=120)
+    response_text = None
+    out_headers = []
 
-        producer.produce(
-            OUTPUT_TOPIC,
-            key=correlation_id.encode(),
-            value=json.dumps({
-                "correlation_id": correlation_id,
-                "conversation_id": conversation_id,
-                "response": response_text,
-            }).encode("utf-8"),
-            headers=out_headers,
-        )
-        producer.flush()
-        print(f"[consumer] Published response for {correlation_id}")
+    for attempt in range(MAX_RETRIES):
+        try:
+            future = asyncio.run_coroutine_threadsafe(process_message(value, headers), _loop)
+            response_text, out_headers = future.result(timeout=120)
+            break
+        except Exception as e:
+            is_transient = any(code in str(e) for code in ["503", "429", "UNAVAILABLE", "Resource exhausted", "name resolution", "gaierror", "ClientConnector"])
+            if is_transient and attempt < MAX_RETRIES - 1:
+                delay = RETRY_DELAYS[attempt]
+                print(f"[consumer] Transient error (attempt {attempt + 1}/{MAX_RETRIES}), retrying in {delay}s: {e}")
+                import time; time.sleep(delay)
+            else:
+                print(f"[consumer] Failed after {attempt + 1} attempt(s): {e}")
+                response_text = "抱歉，AI 服務目前暫時無法使用，請稍後再試。"
+                break
 
-    except Exception as e:
-        print(f"[consumer] Failed to process message {correlation_id}: {e}")
+    producer.produce(
+        OUTPUT_TOPIC,
+        key=correlation_id.encode(),
+        value=json.dumps({
+            "correlation_id": correlation_id,
+            "conversation_id": conversation_id,
+            "response": response_text,
+        }).encode("utf-8"),
+        headers=out_headers,
+    )
+    producer.flush()
+    print(f"[consumer] Published response for {correlation_id}")
 
 
 def run_consumer():
