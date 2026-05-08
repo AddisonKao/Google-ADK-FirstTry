@@ -5,7 +5,7 @@ from google.adk.agents import Agent
 _openai_base = os.getenv("OPENAI_API_BASE")
 _openai_key = os.getenv("OPENAI_API_KEY")
 _openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
-_gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+_gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 if _openai_base and _openai_key:
     try:
