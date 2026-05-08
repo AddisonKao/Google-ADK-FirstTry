@@ -1,4 +1,4 @@
-"""RAG retrieve tool for ADK agent. Hybrid search: vector + BM25 (tsvector)."""
+"""RAG retrieve tool for ADK agent. Vector similarity search via pgvector."""
 import os
 
 import psycopg2
@@ -11,7 +11,7 @@ DATABASE_URL = os.getenv(
 )
 RAG_TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 
-HYBRID_SQL = """
+VECTOR_SEARCH_SQL = """
 SELECT content,
     1 - (embedding <=> %s::vector) AS score
 FROM rag.documents
@@ -34,10 +34,12 @@ def retrieve_tool(query: str) -> str:
         vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
 
         conn = psycopg2.connect(DATABASE_URL)
-        with conn.cursor() as cur:
-            cur.execute(HYBRID_SQL, (vec_str, vec_str, RAG_TOP_K))
-            rows = cur.fetchall()
-        conn.close()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(VECTOR_SEARCH_SQL, (vec_str, vec_str, RAG_TOP_K))
+                rows = cur.fetchall()
+        finally:
+            conn.close()
 
         if not rows:
             return {"result": "No relevant information found in the knowledge base."}

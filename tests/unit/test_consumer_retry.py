@@ -82,3 +82,18 @@ def test_non_transient_error_does_not_retry():
         )
 
     assert call_count["n"] == 1  # no retry for non-transient
+
+
+def test_no_fragmented_session_ids_on_retry():
+    """After Fix 3: all retry attempts must use the same conversation_id as session_id.
+    Previously the inner loop created conv-id-r1, conv-id-r2 breaking multi-turn history."""
+    import inspect
+    import agent.consumer as consumer_mod
+
+    source = inspect.getsource(consumer_mod.process_message)
+    assert "-r{agent_attempt}" not in source, (
+        "Inner retry loop session ID fragmentation found — inner agent_attempt loop should be removed"
+    )
+    assert "agent_attempt" not in source, (
+        "Inner agent_attempt retry loop should have been removed (Fix 3)"
+    )

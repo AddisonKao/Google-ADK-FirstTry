@@ -5,6 +5,7 @@ from google.adk.agents import Agent
 _openai_base = os.getenv("OPENAI_API_BASE")
 _openai_key = os.getenv("OPENAI_API_KEY")
 _openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+_gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 if _openai_base and _openai_key:
     try:
@@ -18,7 +19,7 @@ if _openai_base and _openai_key:
     )
     print(f"[agent] Using OpenAI-compatible endpoint: {_openai_base}, model: {_openai_model}")
 else:
-    _model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    _model = _gemini_model
     print(f"[agent] Using Gemini API, model: {_model}")
 
 
@@ -74,7 +75,9 @@ _instruction = _fetch_instruction()
 
 from datetime import datetime, timezone
 
-_pending_traces: dict = {}  # invocation_id → {trace, gen_count, gen_start_time, gen_input}
+_pending_traces: dict = {}  # invocation_id → {trace, gen_count, gen_start_time, gen_input, inserted_at}
+_PENDING_TRACES_MAXLEN = 1000  # guard against unbounded growth on error paths
+_PENDING_TRACES_TTL_SECONDS = 300  # 5 minutes: stale entries older than this are evicted
 
 
 def _extract_text(contents) -> str:
@@ -95,6 +98,20 @@ def _extract_text(contents) -> str:
     return ""
 
 
+def _evict_stale_traces():
+    """Remove entries older than TTL, and trim to MAXLEN if still over limit."""
+    now = datetime.now(timezone.utc).timestamp()
+    stale = [
+        k for k, v in _pending_traces.items()
+        if now - v.get("inserted_at", now) > _PENDING_TRACES_TTL_SECONDS
+    ]
+    for k in stale:
+        _pending_traces.pop(k, None)
+    # Hard cap: drop oldest entries if still over limit
+    while len(_pending_traces) >= _PENDING_TRACES_MAXLEN:
+        _pending_traces.pop(next(iter(_pending_traces)), None)
+
+
 def _before_model_callback(callback_context, llm_request):
     lf = _get_langfuse()
     if not lf:
@@ -105,12 +122,17 @@ def _before_model_callback(callback_context, llm_request):
 
         if invocation_id not in _pending_traces:
             # 第一次 LLM call：建立 trace，用原始 user input
+            _evict_stale_traces()
             trace = lf.trace(
                 name="kafka_agent",
                 input=gen_input,
                 metadata={"environment": os.getenv("LANGFUSE_ENVIRONMENT", "production")},
             )
-            _pending_traces[invocation_id] = {"trace": trace, "gen_count": 0}
+            _pending_traces[invocation_id] = {
+                "trace": trace,
+                "gen_count": 0,
+                "inserted_at": datetime.now(timezone.utc).timestamp(),
+            }
 
         state = _pending_traces[invocation_id]
         state["gen_start_time"] = datetime.now(timezone.utc)
@@ -138,7 +160,7 @@ def _after_model_callback(callback_context, llm_response):
         usage = getattr(llm_response, "usage_metadata", None)
         input_tokens = getattr(usage, "prompt_token_count", 0) if usage else 0
         output_tokens = getattr(usage, "candidates_token_count", 0) if usage else 0
-        model_name = _openai_model if (_openai_base and _openai_key) else "gemini-2.0-flash"
+        model_name = _openai_model if (_openai_base and _openai_key) else _gemini_model
 
         state["trace"].generation(
             name=f"generate_content_{state['gen_count']}",
