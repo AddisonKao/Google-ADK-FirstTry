@@ -67,3 +67,40 @@ def test_retrieve_returns_chunks_when_rows_exist(monkeypatch):
     result_text = result.get("result", "") if isinstance(result, dict) else str(result)
     assert "chunk1 content" in result_text
     assert "chunk2 content" in result_text
+
+
+def test_retrieve_closes_connection_on_cursor_exception(monkeypatch):
+    """conn.close() must be called even if cursor.execute() raises (Fix 2: connection leak)."""
+    import psycopg2
+
+    close_called = {"n": 0}
+
+    class MockCursor:
+        def execute(self, *args):
+            raise RuntimeError("simulated cursor error")
+        def fetchall(self): return []
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    class MockConn:
+        def cursor(self): return MockCursor()
+        def close(self): close_called["n"] += 1
+
+    monkeypatch.setattr(psycopg2, "connect", lambda *a, **kw: MockConn())
+
+    import agent.tools.retrieve as retrieve_mod
+    monkeypatch.setattr(retrieve_mod, "embed_one", lambda q: [0.0] * 768)
+
+    from agent.tools.retrieve import retrieve_tool
+    result = retrieve_tool("測試")
+    # Should not crash, and close must have been called
+    assert close_called["n"] == 1, "conn.close() was not called after cursor exception"
+    result_text = result.get("result", "") if isinstance(result, dict) else str(result)
+    assert "unavailable" in result_text.lower()
+
+
+def test_retrieve_sql_uses_vector_search_constant(monkeypatch):
+    """VECTOR_SEARCH_SQL constant must be used (Fix 6: HYBRID_SQL renamed)."""
+    import agent.tools.retrieve as retrieve_mod
+    assert hasattr(retrieve_mod, "VECTOR_SEARCH_SQL"), "VECTOR_SEARCH_SQL constant not found"
+    assert not hasattr(retrieve_mod, "HYBRID_SQL"), "HYBRID_SQL should have been removed"

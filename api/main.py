@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -28,6 +29,9 @@ FastAPIInstrumentor.instrument_app(app)
 
 # correlation_id → response text (cleared after SSE delivery)
 results: dict[str, str] = {}
+# correlation_id → insertion timestamp; entries older than _RESULTS_TTL_SECONDS are evicted
+_result_timestamps: dict[str, float] = {}
+_RESULTS_TTL_SECONDS = 65  # slightly longer than SSE timeout (60s) so late responses are still served
 
 
 class KafkaHeaderSetter(DefaultSetter):
@@ -62,6 +66,13 @@ def _output_consumer():
 
                 if cid:
                     results[cid] = response
+                    _result_timestamps[cid] = time.time()
+                    # Evict stale entries that SSE clients never consumed
+                    now = time.time()
+                    stale = [k for k, t in _result_timestamps.items() if now - t > _RESULTS_TTL_SECONDS]
+                    for k in stale:
+                        results.pop(k, None)
+                        _result_timestamps.pop(k, None)
 
                 if conversation_id and response is not None:
                     with get_connection() as conn:
@@ -175,6 +186,7 @@ async def stream_result(conversation_id: str, correlation_id: str):
         for _ in range(120):  # 60 seconds at 0.5s intervals
             if correlation_id in results:
                 response = results.pop(correlation_id)
+                _result_timestamps.pop(correlation_id, None)
                 yield f"data: {json.dumps({'response': response})}\n\n"
                 return
             await asyncio.sleep(0.5)
