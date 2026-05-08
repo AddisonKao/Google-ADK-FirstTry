@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent.otel_setup import setup as setup_otel
 setup_otel()
 
-from tests.evals.agent_for_eval import root_agent
+from agent.agent import root_agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
