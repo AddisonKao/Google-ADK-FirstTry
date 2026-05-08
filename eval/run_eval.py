@@ -18,11 +18,54 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agent.otel_setup import setup as setup_otel
 setup_otel()
 
-from agent.agent import root_agent
+from agent.agent import root_agent, _model, _DEFAULT_INSTRUCTION
+from google.adk.agents import Agent
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types as genai_types
 from eval.judge import judge
+from agent.tools.retrieve import retrieve_tool
+
+
+def _check_rag_available() -> bool:
+    """Return True if pgvector has insurance data, False otherwise."""
+    try:
+        import psycopg2
+        db_url = os.getenv("DATABASE_URL", "postgresql://langfuse:langfuse@localhost:5432/langfuse")
+        conn = psycopg2.connect(db_url)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM rag.documents")
+            count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception:
+        return False
+
+
+def _build_eval_agent():
+    """Build agent with mock retrieve_tool when RAG DB is not available."""
+    rag_available = _check_rag_available()
+    if rag_available:
+        print("[eval] RAG database available — using real retrieve_tool")
+        return root_agent
+
+    print("[eval] RAG database unavailable — using mock retrieve_tool for eval")
+    from tests.conftest import INSURANCE_FIXTURES, DEFAULT_FIXTURE
+
+    def mock_retrieve_tool(query: str) -> dict:
+        """Mock retrieve_tool returning fixture data for eval."""
+        q = query.lower()
+        for keyword, response in INSURANCE_FIXTURES.items():
+            if keyword in q:
+                return {"result": response}
+        return {"result": DEFAULT_FIXTURE}
+
+    return Agent(
+        name="kafka_agent",
+        model=_model,
+        instruction=_DEFAULT_INSTRUCTION,
+        tools=[mock_retrieve_tool],
+    )
 
 DATASET_PATH = Path(__file__).parent / "dataset.jsonl"
 SCORE_THRESHOLD = float(os.getenv("EVAL_SCORE_THRESHOLD", "7.0"))
@@ -55,7 +98,7 @@ async def run_agent(text: str) -> tuple[str, list[str]]:
 
     session_service = InMemorySessionService()
     runner = Runner(
-        agent=root_agent,
+        agent=_build_eval_agent(),
         session_service=session_service,
         app_name="kafka_agent_eval",
     )
