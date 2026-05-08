@@ -72,8 +72,12 @@ async def run_agent(text: str) -> tuple[str, list[str]]:
         session_id=session.id,
         new_message=content,
     ):
-        if hasattr(event, "tool_name") and event.tool_name:
-            tools_called.append(event.tool_name)
+        # Detect tool calls: scan all event parts for function_call regardless of role
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                fn_call = getattr(part, "function_call", None)
+                if fn_call and getattr(fn_call, "name", None):
+                    tools_called.append(fn_call.name)
         if event.is_final_response() and event.content and event.content.parts:
             response_text = event.content.parts[0].text
     return response_text, tools_called
