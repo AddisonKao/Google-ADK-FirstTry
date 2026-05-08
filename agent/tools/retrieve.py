@@ -20,7 +20,7 @@ LIMIT %s;
 """
 
 
-def retrieve_tool(query: str) -> str:
+def retrieve_tool(query: str) -> dict:
     """Search the insurance knowledge base and return relevant context.
 
     Args:

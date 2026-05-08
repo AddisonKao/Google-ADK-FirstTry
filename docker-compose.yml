@@ -18,7 +18,7 @@ x-db-env: &db-env
   DATABASE_URL: postgresql://langfuse:langfuse@postgres:5432/langfuse
 
 x-rag-env: &rag-env
-  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-004}
+  EMBEDDING_MODEL: ${EMBEDDING_MODEL:-gemini-embedding-2}
   EMBEDDING_API_BASE: ${EMBEDDING_API_BASE:-}
   EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
   RAG_TOP_K: ${RAG_TOP_K:-5}
