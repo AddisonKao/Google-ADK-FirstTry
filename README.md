@@ -24,6 +24,48 @@ ADK Consumer (agent/)   ← Google ADK LlmAgent, DatabaseSessionService, ThreadP
 FastAPI                 ← SSE push to browser
 ```
 
+### Request Flow
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant API as FastAPI (api/)
+    participant Kafka
+    participant Consumer as ADK Consumer (agent/)
+    participant LLM
+    participant DB as PostgreSQL
+
+    Browser->>API: POST /conversations
+    API->>DB: INSERT conversation
+    API-->>Browser: { conversation_id }
+
+    Browser->>API: POST /conversations/{id}/turns<br/>{ message: "保費多少？" }
+    API->>DB: INSERT user turn
+    API->>Kafka: produce → agent-input<br/>{ conversation_id, correlation_id, message }
+    API-->>Browser: { correlation_id }
+
+    Browser->>API: GET /conversations/{id}/stream/{correlation_id}<br/>(SSE long-lived connection)
+
+    Kafka-->>Consumer: poll() → message
+    Note over Consumer: executor.submit()<br/>→ Worker Thread<br/>→ run_coroutine_threadsafe()<br/>→ _loop coroutine
+
+    Consumer->>DB: get_session / create_session
+    Consumer->>LLM: run_async() — LLM call 1
+    LLM-->>Consumer: → call retrieve_tool
+    Consumer->>DB: pgvector similarity search
+    DB-->>Consumer: relevant chunks
+    Consumer->>LLM: LLM call 2 (with retrieved context)
+    LLM-->>Consumer: final response
+
+    Consumer->>Kafka: produce → agent-output<br/>{ correlation_id, response }
+    Consumer->>DB: INSERT assistant turn
+
+    Kafka-->>API: _output_consumer thread picks up
+    API->>API: results[correlation_id] = response
+
+    API-->>Browser: SSE: { response: "保費是每月 2,500 元..." }
+```
+
 ### Observability
 
 ```
