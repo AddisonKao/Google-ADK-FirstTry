@@ -66,7 +66,7 @@ def judge(
     else:
         from google import genai
         client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-        judge_model_name = os.getenv("JUDGE_MODEL", os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
+        judge_model_name = os.getenv("JUDGE_MODEL", "gemini-2.5-flash")
         result = client.models.generate_content(
             model=judge_model_name,
             contents=prompt,

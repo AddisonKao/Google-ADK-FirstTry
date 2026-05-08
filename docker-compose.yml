@@ -70,7 +70,7 @@ services:
       OPENAI_API_BASE: ${OPENAI_API_BASE:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash-lite}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
       # Disable Langfuse SDK's auto OTel exporter (requires Langfuse v3 server)
       LANGFUSE_TRACING_ENABLED: "false"
     restart: on-failure
