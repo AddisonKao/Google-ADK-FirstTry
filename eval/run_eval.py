@@ -72,8 +72,8 @@ async def run_agent(text: str) -> tuple[str, list[str]]:
         session_id=session.id,
         new_message=content,
     ):
-        # Detect tool calls from function_call parts (same method as trajectory tests)
-        if event.content and event.content.parts and event.content.role == "model":
+        # Detect tool calls: scan all event parts for function_call regardless of role
+        if event.content and event.content.parts:
             for part in event.content.parts:
                 fn_call = getattr(part, "function_call", None)
                 if fn_call and getattr(fn_call, "name", None):
