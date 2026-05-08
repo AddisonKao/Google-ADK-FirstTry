@@ -47,7 +47,6 @@ _DEFAULT_INSTRUCTION = (
     "For any insurance-related questions (coverage, claims, policies, premiums, terms), "
     "you MUST use the retrieve_tool to search the knowledge base before answering. "
     "Always base your answer on the retrieved context when available. "
-    "If the user asks to echo something, you MUST use the echo_tool. "
     "For non-insurance questions, answer directly without retrieval."
 )
 
