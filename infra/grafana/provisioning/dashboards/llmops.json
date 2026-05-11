@@ -13,8 +13,8 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_agent_invocation_duration_bucket[5m])) by (le, agent_name))",
-          "legendFormat": "{{agent_name}} p99"
+          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_agent_invocation_duration_milliseconds_bucket[5m])) by (le, gen_ai_agent_name))",
+          "legendFormat": "{{gen_ai_agent_name}} p99"
         }
       ]
     },
@@ -26,8 +26,8 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_tool_execution_duration_bucket[5m])) by (le, tool_name))",
-          "legendFormat": "{{tool_name}} p99"
+          "expr": "histogram_quantile(0.99, sum(rate(gen_ai_tool_execution_duration_milliseconds_bucket[5m])) by (le, gen_ai_tool_name))",
+          "legendFormat": "{{gen_ai_tool_name}} p99"
         }
       ]
     },
@@ -39,7 +39,7 @@
       "targets": [
         {
           "datasource": "Prometheus",
-          "expr": "sum(rate(gen_ai_agent_invocation_duration_count[1m])) * 60",
+          "expr": "sum(rate(gen_ai_agent_invocation_duration_milliseconds_count[1m])) * 60",
           "legendFormat": "invocations/min"
         }
       ]
